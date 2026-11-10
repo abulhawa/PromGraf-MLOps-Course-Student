@@ -3,8 +3,15 @@ import os
 import time
 
 from fastapi import FastAPI, HTTPException, Response
-from prometheus_client import CollectorRegistry, Counter, Histogram, generate_latest
+from prometheus_client import (
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 from pydantic import BaseModel
+from sklearn.metrics import precision_recall_fscore_support
 from transformers import pipeline
 
 # Configure logging
@@ -44,6 +51,32 @@ predictions_by_category = Counter(
     registry=registry,
 )
 
+model_accuracy_score = Gauge(
+    "model_accuracy_score",
+    "Current accuracy of the News Classifier model",
+    registry=registry,
+)
+
+
+model_precision_score = Gauge(
+    "model_precision_score",
+    "Precision by category in the latest evaluation",
+    ["category"],
+    registry=registry,
+)
+model_recall_score = Gauge(
+    "model_recall_score",
+    "Recall by category in the latest evaluation",
+    ["category"],
+    registry=registry,
+)
+model_f1_score = Gauge(
+    "model_f1_score",
+    "F1 score by category in the latest evaluation",
+    ["category"],
+    registry=registry,
+)
+
 
 # Load the Hugging Face model
 # This will download the model weights the first time it's run
@@ -66,6 +99,12 @@ class ArticleInput(BaseModel):
 class PredictionOutput(BaseModel):
     category: str
     score: float
+
+
+# Data model for evaluation
+class EvaluationItem(BaseModel):
+    text: str
+    true_label: str
 
 
 @app.get("/")
@@ -139,6 +178,64 @@ async def predict(article: ArticleInput):
         raise HTTPException(
             status_code=500, detail=f"Prediction failed due to an internal error: {e}"
         )
+
+
+@app.post("/evaluate")
+async def evaluate_model(items: list[EvaluationItem]):
+    """Evaluate the model against labeled articles and publish its accuracy."""
+    start_time = time.perf_counter()
+    if not items:
+        raise HTTPException(status_code=400, detail="No items provided for evaluation.")
+
+    correct_predictions = 0
+    true_labels = []
+    predicted_labels = []
+    for item in items:
+        try:
+            predicted_label = classifier(item.text)[0]["label"]
+            true_labels.append(item.true_label.lower())
+            predicted_labels.append(predicted_label.lower())
+            if predicted_label.lower() == item.true_label.lower():
+                correct_predictions += 1
+        except Exception:
+            logger.exception("Failed to classify an evaluation item.")
+
+    accuracy = correct_predictions / len(items)
+    model_accuracy_score.set(accuracy)
+    categories = sorted(set(true_labels) | set(predicted_labels))
+
+    model_precision_score.clear()
+    model_recall_score.clear()
+    model_f1_score.clear()
+
+    if categories:
+        precision, recall, f1, _ = precision_recall_fscore_support(
+            true_labels,
+            predicted_labels,
+            labels=categories,
+            average=None,
+            zero_division=0,
+        )
+        for category, precision_score, recall_score, f1_score in zip(
+            categories, precision, recall, f1
+        ):
+            model_precision_score.labels(category=category).set(precision_score)
+            model_recall_score.labels(category=category).set(recall_score)
+            model_f1_score.labels(category=category).set(f1_score)
+    logger.info("Model evaluated. Accuracy: %.4f", accuracy)
+
+    api_requests_total.labels(
+        endpoint="/evaluate", method="POST", status_code=200
+    ).inc()
+    api_request_duration_seconds.labels(
+        endpoint="/evaluate", method="POST", status_code=200
+    ).observe(time.perf_counter() - start_time)
+
+    return {
+        "message": "Model evaluation completed",
+        "accuracy": accuracy,
+        "evaluated_items": len(items),
+    }
 
 
 @app.get("/metrics")

@@ -28,6 +28,12 @@ services:
       - "3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./deployment/grafana/alerting:/etc/grafana/provisioning/alerting:ro
+      - ./deployment/grafana/dashboard-providers:/etc/grafana/provisioning/dashboards:ro
+      - ./deployment/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./deployment/grafana/dashboards:/var/lib/grafana/course-dashboards:ro
+    environment:
+      GRAFANA_PROMETHEUS_UID: ${GRAFANA_PROMETHEUS_UID:-eg3vstqffljb4e}
     depends_on:
       - prometheus
     restart: always
