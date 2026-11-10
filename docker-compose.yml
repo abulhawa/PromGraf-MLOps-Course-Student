@@ -1,3 +1,4 @@
+name: monitoring
 services:
   news-classifier-api:
     build: ./src/api
@@ -9,3 +10,15 @@ services:
     build: ./src/evaluation
     depends_on:
       - news-classifier-api
+
+  prometheus:
+    image: prom/prometheus:v3.13.5
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deployment/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    restart: always
+
+volumes:
+  prometheus_data:
