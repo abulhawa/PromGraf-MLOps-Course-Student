@@ -17,6 +17,7 @@ services:
       - "9090:9090"
     volumes:
       - ./deployment/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./deployment/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus_data:/prometheus
     restart: always
 
